@@ -6,17 +6,9 @@ TESTS_ENVIRONMENT = \
 
 # The tests
 noinst_PROGRAMS = \
-	test-change-processor-rect	\
-	test-gegl-tile			\
-	test-color-op			\
-	test-gegl-rectangle		\
-	test-misc			\
-	test-path			\
-	test-proxynop-processing
+	test-cl-brightness-contrast
 
-EXTRA_DIST = test-exp-combine.sh
-
-TESTS = $(noinst_PROGRAMS) test-exp-combine.sh
+TESTS = $(noinst_PROGRAMS)
 
 # Common CPPFLAGS
 AM_CPPFLAGS = \
