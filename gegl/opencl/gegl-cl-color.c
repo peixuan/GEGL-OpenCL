@@ -80,7 +80,7 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
 	color_in_tex=* in_tex;
 	color_out_tex=* out_tex;
 	
-	 g_printf("[OpenCL] Converting between color formats: (%s -> %s)\n", babl_get_name(in_format),
+	g_printf("[OpenCL] Converting between color formats: (%s -> %s)\n", babl_get_name(in_format),
 		                                                                          babl_get_name(out_format));
 
 	if(in_format == babl_format ("RGBA float"))
@@ -142,7 +142,6 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
 	{
 	
 		cl_mem tmp_tex;
-
 		errcode = gegl_clSetKernelArg(kernels_color->kernel[conv[i]], 0, sizeof(cl_mem), (void*)&color_in_tex);
 		if (errcode != CL_SUCCESS) CL_ERROR;
         
@@ -167,19 +166,11 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
 		color_out_tex = tmp_tex;
 	}
 
+   //the out_in flag means whether the in_tex and out_tex should still be seen as input and output 
    if(out_in==1){
 		*in_tex=color_in_tex;
 		*out_tex=color_out_tex;
 	}
-
-
-
-
-
-
-
-	//release the divided memory space for color input
-	// and treat the color output memory as the input memory of operation will do.
 	
 	return TRUE;
 	}
