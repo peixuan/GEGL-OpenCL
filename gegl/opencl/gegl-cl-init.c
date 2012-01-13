@@ -32,8 +32,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#include <windows.h>
-#define CL_LOAD_FUNCTION(func)
 #include "gegl-cl-color.h"
 
 ////
@@ -359,14 +357,14 @@ gegl_cl_init(GError **gError)
         cl_int num_of_devices;
         status = gegl_clGetDeviceIDs(
             cl_status.platform_id, CL_DEVICE_TYPE_GPU,
-            0, NULL, &num_of_platforms);
+            0, NULL, &num_of_devices);
         if (CL_SUCCESS == status && num_of_devices > 0)
         {
             cl_device_id *devices = (cl_device_id*)
                 malloc(num_of_devices * sizeof(cl_device_id));
             status = gegl_clGetDeviceIDs(
                 cl_status.platform_id, CL_DEVICE_TYPE_GPU,
-                0, NULL, &num_of_platforms);
+                num_of_devices, devices, NULL);
             if (CL_SUCCESS != status)
             {
                 printf("[OpenCL]Error: Calling clGetDeviceIDs\n");
@@ -405,6 +403,12 @@ gegl_cl_init(GError **gError)
     }
 
     cl_status.is_opencl_available = TRUE;
+
+    if (cl_status.is_opencl_available)
+        gegl_cl_color_compile_kernels();
+
+    g_printf("[OpenCL] OK\n");
+
 
     return TRUE;
 }

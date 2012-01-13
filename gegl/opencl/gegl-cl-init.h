@@ -128,6 +128,8 @@ typedef struct
     cl_context       context;
     cl_device_id     device_id;
     cl_command_queue command_queue;
+    cl_uint          max_height;
+    cl_uint          max_width;
     char             platform_profile[300];
     char             platform_version[300];
     char             platform_name[300];
@@ -161,7 +163,7 @@ GHashTable *cl_program_hash;
 
 #ifdef __DYNAMIC_LOADING_CL_MAIN_C__
 
-gegl_cl_status                     cl_status = {FALSE};
+gegl_cl_status                     cl_status = {FALSE,NULL,NULL,NULL,NULL,2048,2048,"","","","",""};
 GHashTable*                        cl_program_hash;
 h_clGetPlatformIDs                 gegl_clGetPlatformIDs                 = NULL;
 h_clGetPlatformInfo                gegl_clGetPlatformInfo                = NULL;

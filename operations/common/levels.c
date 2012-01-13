@@ -19,6 +19,13 @@
 
 #include "config.h"
 #include <glib/gi18n-lib.h>
+#include "gegl.h"
+#include "gegl-types-internal.h"
+#include "graph/gegl-pad.h"
+#include "graph/gegl-node.h"
+#include "gegl-utils.h"
+#include <string.h>
+
 
 
 #ifdef GEGL_CHANT_PROPERTIES
@@ -38,6 +45,34 @@ gegl_chant_double (out_high, _("High output"),
 #define GEGL_CHANT_C_FILE         "levels.c"
 
 #include "gegl-chant.h"
+
+static void prepare (GeglOperation *operation)
+{
+
+	gegl_operation_set_format (operation, "input", babl_format ("RGBA float"));
+
+	GeglOperationClass            *operation_class;
+	operation_class=GEGL_OPERATION_GET_CLASS(operation);
+	Babl * format=babl_format ("RGBA float");
+	if(operation_class->opencl_support){
+		//Set the source pixel data format as the output format of current operation
+		GeglNode * self;
+		GeglPad *pad;
+		//default format:RGBA float
+
+		//get the source pixel data format
+		self=gegl_operation_get_source_node(operation,"input");
+		while(self){
+			if(strcmp(gegl_node_get_operation(self),"gimp:tilemanager-source")==0){
+				format=gegl_operation_get_format(self->operation,"output");
+				break;
+			}
+			self=gegl_operation_get_source_node(self->operation,"input");
+		}
+	}
+	gegl_operation_set_format (operation, "output", format);
+}
+
 
 /* GeglOperationPointFilter gives us a linear buffer to operate on
  * in our requested pixel format
@@ -84,6 +119,89 @@ process (GeglOperation       *op,
   return TRUE;
 }
 
+#include "opencl/gegl-cl.h"
+
+static const char* kernel_source =
+"__constant sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |   \n"
+"                    CLK_ADDRESS_NONE                       |   \n"
+"                    CLK_FILTER_NEAREST;                        \n"
+"__kernel void kernel_bc(__global  const float4     *in,        \n"
+"                        __global  float4     *out ,            \n"
+"                         float in_offset,                      \n"
+"                         float out_offset,                     \n"
+"                         float scale)                          \n"
+"{                                                              \n"
+"  int gid = get_global_id(0);                                  \n"
+"  float4 in_v  = in[gid];                                      \n"
+"  float4 out_v;                                                \n"
+"  out_v.xyz = (in_v.xyz - in_offset) * scale + out_offset;     \n"
+"  out_v.w   =  in_v.w;                                         \n"
+"  out[gid]=out_v;                                              \n"
+"}                                                              \n";
+
+static gegl_cl_run_data *cl_data = NULL;
+
+/* OpenCL processing function */
+static gboolean
+cl_process (GeglOperation       *op,
+            cl_mem              in_tex,
+            cl_mem              out_tex,
+            const size_t global_worksize[1],
+            const GeglRectangle *roi)
+{
+  /* Retrieve a pointer to GeglChantO structure which contains all the
+   * chanted properties
+   */
+
+  GeglChantO *o = GEGL_CHANT_PROPERTIES (op);
+
+  gfloat      in_range;
+  gfloat      out_range;
+  gfloat      in_offset;
+  gfloat      out_offset;
+  gfloat      scale;
+
+  in_offset  = o->in_low * 1.0;
+  out_offset = o->out_low * 1.0;
+  in_range   = o->in_high-o->in_low;
+  out_range  = o->out_high-o->out_low;
+
+  if (in_range == 0.0)
+	  in_range = 0.00000001;
+
+  scale = out_range/in_range;
+
+  cl_int errcode = 0;
+
+  if (!cl_data)
+    {
+      const char *kernel_name[] = {"kernel_bc", NULL};
+      cl_data = gegl_cl_compile_and_build (kernel_source, kernel_name);
+    }
+
+  if (!cl_data) return 1;
+
+  CL_SAFE_CALL(errcode = gegl_clSetKernelArg(cl_data->kernel[0], 0, sizeof(cl_mem),   (void*)&in_tex));
+  CL_SAFE_CALL(errcode = gegl_clSetKernelArg(cl_data->kernel[0], 1, sizeof(cl_mem),   (void*)&out_tex));
+  CL_SAFE_CALL(errcode = gegl_clSetKernelArg(cl_data->kernel[0], 2, sizeof(cl_float), (void*)&in_offset));
+  CL_SAFE_CALL(errcode = gegl_clSetKernelArg(cl_data->kernel[0], 3, sizeof(cl_float), (void*)&out_offset));
+  CL_SAFE_CALL(errcode = gegl_clSetKernelArg(cl_data->kernel[0], 4, sizeof(cl_float), (void*)&scale));
+
+  CL_SAFE_CALL(errcode = gegl_clEnqueueNDRangeKernel(gegl_cl_get_command_queue (),
+                                                     cl_data->kernel[0], 1,
+                                                     NULL, global_worksize, NULL,
+                                                     0, NULL, NULL) );
+
+  if (errcode != CL_SUCCESS)
+    {
+      g_warning("[OpenCL] Error in Brightness-Constrast Kernel\n");
+      return errcode;
+    }
+
+  //g_printf("[OpenCL] Running Brightness-Constrast Kernel in region (%d %d %d %d)\n", roi->x, roi->y, roi->width, roi->height);
+  return errcode;
+}
+
 
 static void
 gegl_chant_class_init (GeglChantClass *klass)
@@ -95,6 +213,12 @@ gegl_chant_class_init (GeglChantClass *klass)
   point_filter_class = GEGL_OPERATION_POINT_FILTER_CLASS (klass);
 
   point_filter_class->process = process;
+
+  operation_class->prepare = prepare;
+
+  point_filter_class->cl_process           = cl_process;
+//  point_filter_class->cl_kernel_source     = kernel_source;
+  operation_class->opencl_support = TRUE;
 
   operation_class->name        = "gegl:levels";
   operation_class->categories  = "color";
