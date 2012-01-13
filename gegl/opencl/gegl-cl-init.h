@@ -30,6 +30,14 @@
 #include <glib-object.h>
 #include <cl/opencl.h>
 
+#define CL_SAFE_CALL(func)                                          \
+	func;                                                               \
+	if (errcode != CL_SUCCESS)                                          \
+{                                                                   \
+	g_warning("OpenCL error in %s, Line %u in file %s\nError:%s",     \
+#func, __LINE__, __FILE__, gegl_cl_errstring(errcode)); \
+}
+
 #if defined(_WIN32)
 #define CL_API_ENTRY
 #define CL_API_CALL __stdcall
@@ -120,12 +128,41 @@ typedef struct
     cl_context       context;
     cl_device_id     device_id;
     cl_command_queue command_queue;
+    char             platform_profile[300];
+    char             platform_version[300];
+    char             platform_name[300];
+    char             platform_vendor[300];
+    char             platform_extensions[300];
 }
 gegl_cl_status;
+
+const char *gegl_cl_errstring(cl_int err);
+
+gboolean gegl_cl_init (GError **error);
+
+gboolean gegl_cl_is_accelerated (void);
+
+cl_platform_id gegl_cl_get_platform (void);
+
+cl_device_id gegl_cl_get_device (void);
+
+cl_context gegl_cl_get_context (void);
+
+cl_command_queue gegl_cl_get_command_queue (void);
+
+typedef struct
+{
+    cl_program program;
+    cl_kernel  kernel[];
+} gegl_cl_run_data;
+
+
+GHashTable *cl_program_hash;
 
 #ifdef __DYNAMIC_LOADING_CL_MAIN_C__
 
 gegl_cl_status                     cl_status = {FALSE};
+GHashTable*                        cl_program_hash;
 h_clGetPlatformIDs                 gegl_clGetPlatformIDs                 = NULL;
 h_clGetPlatformInfo                gegl_clGetPlatformInfo                = NULL;
 h_clGetDeviceIDs                   gegl_clGetDeviceIDs                   = NULL;
@@ -203,6 +240,7 @@ h_clGetExtensionFunctionAddress    gegl_clGetExtensionFunctionAddress    = NULL;
 
 #else
 
+extern GHashTable *cl_program_hash;
 extern gegl_cl_status                     cl_status                            ;
 extern h_clGetPlatformIDs                 gegl_clGetPlatformIDs                ;
 extern h_clGetPlatformInfo                gegl_clGetPlatformInfo               ;
