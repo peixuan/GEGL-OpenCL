@@ -21,7 +21,11 @@
 
 #include "config.h"
 #include <glib/gi18n-lib.h>
-
+#include "gegl.h"
+#include "gegl-types-internal.h"
+#include "graph/gegl-pad.h"
+#include "graph/gegl-node.h"
+#include "gegl-utils.h"
 
 #ifdef GEGL_CHANT_PROPERTIES
 
@@ -53,6 +57,15 @@ edge_sobel (GeglBuffer          *src,
             gboolean            vertical,
             gboolean            keep_signal);
 
+static void
+edge_sobel_cl(GeglBuffer          *src,
+              const GeglRectangle *src_rect,
+              GeglBuffer          *dst,
+              const GeglRectangle *dst_rect,
+              gboolean            horizontal,
+              gboolean            vertical,
+              gboolean            keep_signal);
+
 #include <stdio.h>
 
 static void prepare (GeglOperation *operation)
@@ -63,6 +76,28 @@ static void prepare (GeglOperation *operation)
   area->left = area->right = area->top = area->bottom = SOBEL_RADIUS;
   gegl_operation_set_format (operation, "input", babl_format ("RGBA float"));
   gegl_operation_set_format (operation, "output", babl_format ("RGBA float"));
+}
+
+static void prepare_cl (GeglOperation *operation)
+{
+    GeglOperationAreaFilter *area = GEGL_OPERATION_AREA_FILTER (operation);
+    //GeglChantO              *o = GEGL_CHANT_PROPERTIES (operation);
+
+    area->left = area->right = area->top = area->bottom = SOBEL_RADIUS;
+
+    gegl_operation_set_format (operation, "input", babl_format ("RGBA float"));
+    GeglNode * self;
+    GeglPad *pad;
+    Babl * format=babl_format ("RGBA float");
+    self=gegl_operation_get_source_node(operation,"input");
+    while(self){
+        if(strcmp(gegl_node_get_operation(self),"gimp:tilemanager-source")==0){
+            format=gegl_operation_get_format(self->operation,"output");
+            break;
+        }
+        self=gegl_operation_get_source_node(self->operation,"input");
+    }
+    gegl_operation_set_format (operation, "output", format);
 }
 
 static gboolean
@@ -76,6 +111,9 @@ process (GeglOperation       *operation,
 
   compute = gegl_operation_get_required_for_output (operation, "input",result);
 
+  if (gegl_cl_is_opencl_available())
+      edge_sobel_cl(input, &compute, output, result, o->horizontal, o->vertical, o->keep_signal);
+  else
   edge_sobel (input, &compute, output, result, o->horizontal, o->vertical, o->keep_signal);
 
   return  TRUE;
@@ -181,6 +219,125 @@ edge_sobel (GeglBuffer          *src,
   g_free (dst_buf);
 }
 
+#include "opencl/gegl-cl.h"
+
+static const char* kernel_source =
+"#define SOBEL_RADIUS 1                                                \n"
+"kernel void kernel_edgesobel(global float4 *in,                       \n"
+"                             global float4 *out,                      \n"
+"                             int horizontal,                          \n"
+"                             int vertical,                            \n"
+"                             int keep_signal)                         \n"
+"{                                                                     \n"
+"    int gidx = get_global_id(0);                                      \n"
+"    int gidy = get_global_id(1);                                      \n"
+"    //                                                                \n"
+"    float4 hor_grad = 0.0f;                                           \n"
+"    float4 ver_grad = 0.0f;                                           \n"
+"    float4 gradient = 0.0f;                                           \n"
+"    //                                                                \n"
+"    int src_width = get_global_size(0) + 2;                           \n"
+"                                                                      \n"
+"    //                                                                \n"
+"    int i = gidx + SOBEL_RADIUS, j = gidy + SOBEL_RADIUS;             \n"
+"    int gid1d = i + j * src_width;                                    \n"
+"                                                                      \n"
+"    if (horizontal)                                                   \n"
+"    {                                                                 \n"
+"        hor_grad.xyz +=                                               \n"
+"            - 1.0f * in[gid1d - 1 - src_width].xyz                    \n"
+"            + 1.0f * in[gid1d + 1 - src_width].xyz                    \n"
+"            - 2.0f * in[gid1d - 1            ].xyz                    \n"
+"            + 2.0f * in[gid1d + 1            ].xyz                    \n"
+"            - 1.0f * in[gid1d - 1 + src_width].xyz                    \n"
+"            + 1.0f * in[gid1d + 1 + src_width].xyz;                   \n"
+"    }                                                                 \n"
+"    if (vertical)                                                     \n"
+"    {                                                                 \n"
+"        ver_grad.xyz +=                                               \n"
+"            - 1.0f * in[gid1d - 1 - src_width].xyz                    \n"
+"            - 2.0f * in[gid1d     - src_width].xyz                    \n"
+"            - 1.0f * in[gid1d + 1 - src_width].xyz                    \n"
+"            + 1.0f * in[gid1d - 1 + src_width].xyz                    \n"
+"            + 2.0f * in[gid1d     + src_width].xyz                    \n"
+"            + 1.0f * in[gid1d + 1 + src_width].xyz;                   \n"
+"    }                                                                 \n"
+"                                                                      \n"
+"    if (horizontal && vertical)                                       \n"
+"    {                                                                 \n"
+"        gradient.xyz = sqrt(                                          \n"
+"            hor_grad.xyz * hor_grad.xyz +                             \n"
+"            ver_grad.xyz * ver_grad.xyz) / 1.41f;                     \n"
+"    }                                                                 \n"
+"    else                                                              \n"
+"    {                                                                 \n"
+"        if (keep_signal)                                              \n"
+"            gradient.xyz = hor_grad.xyz + ver_grad.xyz;               \n"
+"        else                                                          \n"
+"            gradient.xyz = fabs(hor_grad.xyz + ver_grad.xyz);         \n"
+"    }                                                                 \n"
+"                                                                      \n"
+"    gradient.w = in[gid1d].w;                                         \n"
+"                                                                      \n"
+"    out[gidx + gidy * (src_width-2)] = gradient;                      \n"
+"}                                                                     \n";
+
+static gegl_cl_run_data *cl_data = NULL;
+
+static void
+edge_sobel_cl(GeglBuffer          *src,
+              const GeglRectangle *src_rect,
+              GeglBuffer          *dst,
+              const GeglRectangle *dst_rect,
+              gboolean            horizontal,
+              gboolean            vertical,
+              gboolean            keep_signal)
+{
+    const Babl   * in_format = babl_format("RGBA float");
+    const Babl   *out_format = babl_format("RGBA float");
+    /* AreaFilter general processing flow.
+       Loading data and making the necessary color space conversion. */
+#include "gegl-cl-operation-area-filter-fw1.h"
+    ///////////////////////////////////////////////////////////////////////////
+    /* Algorithm specific processing flow.
+       Build kernels, setting parameters, and running them. */
+
+    if (!cl_data)
+    {
+        const char *kernel_name[] = {"kernel_edgesobel", NULL};
+        cl_data = gegl_cl_compile_and_build(kernel_source, kernel_name);
+    }
+    if (!cl_data) CL_ERROR;
+    
+    cl_int n_horizontal  = horizontal;
+    cl_int n_vertical    = vertical;
+    cl_int n_keep_signal = keep_signal;
+
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 0, sizeof(cl_mem) ,(void*)&src_mem));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 1, sizeof(cl_mem), (void*)&dst_mem));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 2, sizeof(cl_int), (void*)&n_horizontal));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 3, sizeof(cl_int), (void*)&n_vertical));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 4, sizeof(cl_int), (void*)&n_keep_signal));
+
+    CL_SAFE_CALL(errcode = gegl_clEnqueueNDRangeKernel(
+        gegl_cl_get_command_queue(), cl_data->kernel[0],
+        2, NULL,
+        gbl_size, NULL,
+        0, NULL, NULL));
+
+    errcode = gegl_clEnqueueBarrier(gegl_cl_get_command_queue());
+    if (CL_SUCCESS != errcode) CL_ERROR;
+
+    ///////////////////////////////////////////////////////////////////////////
+    /* AreaFilter general processing flow.
+       Making the necessary color space conversion and Saving data. */
+#include "gegl-cl-operation-area-filter-fw2.h"
+}
 
 static void
 gegl_chant_class_init (GeglChantClass *klass)
@@ -192,9 +349,13 @@ gegl_chant_class_init (GeglChantClass *klass)
   filter_class     = GEGL_OPERATION_FILTER_CLASS (klass);
 
   filter_class->process   = process;
-  operation_class->prepare = prepare;
+  if (gegl_cl_is_opencl_available())  
+      operation_class->prepare = prepare_cl;
+  else
+      operation_class->prepare = prepare;
 
   operation_class->name        = "gegl:edge-sobel";
+  operation_class->opencl_support = TRUE;
   operation_class->categories  = "edge-detect";
   operation_class->description =
         _("Specialized direction-dependent edge detection");

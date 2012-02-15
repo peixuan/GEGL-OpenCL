@@ -19,7 +19,11 @@
 
 #include "config.h"
 #include <glib/gi18n-lib.h>
-
+#include "gegl.h"
+#include "gegl-types-internal.h"
+#include "graph/gegl-pad.h"
+#include "graph/gegl-node.h"
+#include "gegl-utils.h"
 
 #ifdef GEGL_CHANT_PROPERTIES
 
@@ -44,6 +48,13 @@ bilateral_filter (GeglBuffer          *src,
                   const GeglRectangle *dst_rect,
                   gdouble              radius,
                   gdouble              preserve);
+static void
+bilateral_filter_cl(GeglBuffer          *src,
+                    const GeglRectangle *src_rect,
+                    GeglBuffer          *dst,
+                    const GeglRectangle *dst_rect,
+                    gdouble              radius,
+                    gdouble              preserve);
 
 #include <stdio.h>
 
@@ -55,6 +66,28 @@ static void prepare (GeglOperation *operation)
   area->left = area->right = area->top = area->bottom = ceil (o->blur_radius);
   gegl_operation_set_format (operation, "input", babl_format ("RGBA float"));
   gegl_operation_set_format (operation, "output", babl_format ("RGBA float"));
+}
+
+static void prepare_cl (GeglOperation *operation)
+{
+    GeglOperationAreaFilter *area = GEGL_OPERATION_AREA_FILTER (operation);
+    GeglChantO              *o = GEGL_CHANT_PROPERTIES (operation);
+
+    area->left = area->right = area->top = area->bottom = ceil (o->blur_radius);
+
+    gegl_operation_set_format (operation, "input", babl_format ("RGBA float"));
+    GeglNode * self;
+    GeglPad *pad;
+    Babl * format=babl_format ("RGBA float");
+    self=gegl_operation_get_source_node(operation,"input");
+    while(self){
+        if(strcmp(gegl_node_get_operation(self),"gimp:tilemanager-source")==0){
+            format=gegl_operation_get_format(self->operation,"output");
+            break;
+        }
+        self=gegl_operation_get_source_node(self->operation,"input");
+    }
+    gegl_operation_set_format (operation, "output", format);
 }
 
 static gboolean
@@ -74,6 +107,9 @@ process (GeglOperation       *operation,
     }
   else
     {
+        if (gegl_cl_is_opencl_available())
+            bilateral_filter_cl (input, &compute, output, result, o->blur_radius, o->edge_preservation);
+        else
       bilateral_filter (input, &compute, output, result, o->blur_radius, o->edge_preservation);
     }
 
@@ -163,6 +199,116 @@ bilateral_filter (GeglBuffer          *src,
   g_free (dst_buf);
 }
 
+#include "opencl/gegl-cl.h"
+
+static const char* kernel_source =
+"#define POW2(a) ((a)*(a))                                             \n"
+"kernel void bilateral_filter(global float4 *in,                       \n"
+"                             global float4 *out,                      \n"
+"                             float radius,                            \n"
+"                             float preserve)                          \n"
+"{                                                                     \n"
+"    int gidx = get_global_id(0);                                      \n"
+"    int gidy = get_global_id(1);                                      \n"
+"                                                                      \n"
+"    int src_width  = get_global_size(0) + (int)ceil(radius) * 2;      \n"
+"    int src_height = get_global_size(1) + (int)ceil(radius) * 2;      \n"
+"                                                                      \n"
+"                                                                      \n"
+"    int u,v;                                                          \n"
+"    float4 center_pix =                                               \n"
+"        in[gidx + (int)ceil(radius)                                   \n"
+"           + (gidy + (int)ceil(radius)) * src_width];                 \n"
+"    float4 accumulated = 0.0f;                                        \n"
+"    float count =0.0f;                                                \n"
+"                                                                      \n"
+"    for (v = -radius;v <= radius; ++v)                                \n"
+"    {                                                                 \n"
+"        for (u = -radius;u <= radius; ++u)                            \n"
+"        {                                                             \n"
+"            int i,j;                                                  \n"
+"            i = gidx + radius + u;                                    \n"
+"            j = gidy + radius + v;                                    \n"
+"            if (i >= 0 && i < src_width &&                            \n"
+"                j >= 0 && j < src_height)                             \n"
+"            {                                                         \n"
+"                int gid1d = i + j * src_width;                        \n"
+"                                                                      \n"
+"                float diff_map = exp (                                \n"
+"                    - (   POW2(center_pix.x - in[gid1d].x)            \n"
+"                        + POW2(center_pix.y - in[gid1d].y)            \n"
+"                        + POW2(center_pix.z - in[gid1d].z))           \n"
+"                    * preserve);                                      \n"
+"                                                                      \n"
+"                float gaussian_weight;                                \n"
+"                float weight;                                         \n"
+"                                                                      \n"
+"                gaussian_weight =                                     \n"
+"                    exp( - 0.5f * (POW2(u) + POW2(v)) / radius);      \n"
+"                                                                      \n"
+"                weight = diff_map * gaussian_weight;                  \n"
+"                                                                      \n"
+"                accumulated += in[gid1d] * weight;                    \n"
+"                count += weight;                                      \n"
+"            }                                                         \n"
+"        }                                                             \n"
+"    }                                                                 \n"
+"    out[gidx + gidy * get_global_size(0)] = accumulated / count;      \n"
+"}                                                                     \n";
+
+static gegl_cl_run_data *cl_data = NULL;
+
+static void
+bilateral_filter_cl(GeglBuffer  *src,
+                    const GeglRectangle  *src_rect,
+                    GeglBuffer  *dst,
+                    const GeglRectangle  *dst_rect,
+                    gdouble              radius,
+                    gdouble              preserve)
+{
+    const Babl   * in_format = babl_format("RGBA float");
+    const Babl   *out_format = babl_format("RGBA float");
+
+    /* AreaFilter general processing flow.
+       Loading data and making the necessary color space conversion. */
+#include "gegl-cl-operation-area-filter-fw1.h"
+    ///////////////////////////////////////////////////////////////////////////
+    /* Algorithm specific processing flow.
+       Build kernels, setting parameters, and running them. */
+
+    if (!cl_data)
+    {
+        const char *kernel_name[] = {"bilateral_filter", NULL};
+        cl_data = gegl_cl_compile_and_build(kernel_source, kernel_name);
+    }
+    if (!cl_data) CL_ERROR;
+
+    cl_float f_radius   = (cl_float)radius;
+    cl_float f_preserve = (cl_float)preserve;
+
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 0, sizeof(cl_mem) ,  (void*)&src_mem));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 1, sizeof(cl_mem),   (void*)&dst_mem));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 2, sizeof(cl_float), (void*)&f_radius));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 3, sizeof(cl_float), (void*)&f_preserve));
+
+    CL_SAFE_CALL(errcode = gegl_clEnqueueNDRangeKernel(
+        gegl_cl_get_command_queue(), cl_data->kernel[0],
+        2, NULL,
+        gbl_size, NULL,
+        0, NULL, NULL));
+
+    errcode = gegl_clEnqueueBarrier(gegl_cl_get_command_queue());
+    if (CL_SUCCESS != errcode) CL_ERROR;
+
+    ///////////////////////////////////////////////////////////////////////////
+    /* AreaFilter general processing flow.
+       Making the necessary color space conversion and Saving data. */
+#include "gegl-cl-operation-area-filter-fw2.h"
+}
 
 static void
 gegl_chant_class_init (GeglChantClass *klass)
@@ -174,9 +320,13 @@ gegl_chant_class_init (GeglChantClass *klass)
   filter_class     = GEGL_OPERATION_FILTER_CLASS (klass);
 
   filter_class->process   = process;
-  operation_class->prepare = prepare;
+  if (gegl_cl_is_opencl_available())  
+      operation_class->prepare = prepare_cl;
+  else
+      operation_class->prepare = prepare;
 
   operation_class->name        = "gegl:bilateral-filter";
+  operation_class->opencl_support = TRUE;
   operation_class->categories  = "misc";
   operation_class->description =
         _("An edge preserving blur filter that can be used for noise reduction. "

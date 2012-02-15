@@ -81,9 +81,6 @@ struct buf_tex
   cl_mem *tex;
 };
 
-#define CL_ERROR {g_assert(0);}
-//#define CL_ERROR {goto error;}
-
 #include "opencl/gegl-cl-color-kernel.h"
 #include "opencl/gegl-cl-color.h"
 

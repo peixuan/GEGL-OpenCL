@@ -38,6 +38,10 @@
 #func, __LINE__, __FILE__, gegl_cl_errstring(errcode)); \
 }
 
+//#define CL_ERROR {return;}
+#define CL_ERROR {g_assert(0);}
+//#define CL_ERROR {goto error;}
+
 #if defined(_WIN32)
 #define CL_API_ENTRY
 #define CL_API_CALL __stdcall
