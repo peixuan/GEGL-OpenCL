@@ -19,6 +19,11 @@
 #include "config.h"
 #include <glib/gi18n-lib.h>
 #include <math.h>
+#include "gegl.h"
+#include "gegl-types-internal.h"
+#include "graph/gegl-pad.h"
+#include "graph/gegl-node.h"
+#include "gegl-utils.h"
 
 #ifdef GEGL_CHANT_PROPERTIES
 
@@ -37,6 +42,13 @@ gegl_chant_int (ysize, _("Block Height"), 1, 256, 8,
 #define CELL_X(px, cell_width)  ((px) / (cell_width))
 #define CELL_Y(py, cell_height)  ((py) / (cell_height))
 
+static void
+pixelise_cl     (GeglBuffer  *src,
+                 const GeglRectangle  *src_rect,
+                 GeglBuffer  *dst,
+                 const GeglRectangle  *dst_rect,
+                 const int   xsize,
+                 const int   ysize);
 
 static void prepare (GeglOperation *operation)
 {
@@ -53,6 +65,33 @@ static void prepare (GeglOperation *operation)
 
   gegl_operation_set_format (operation, "output",
                              babl_format ("RaGaBaA float"));
+}
+
+static void prepare_cl (GeglOperation *operation)
+{
+    GeglChantO              *o;
+    GeglOperationAreaFilter *op_area;
+
+    op_area = GEGL_OPERATION_AREA_FILTER (operation);
+    o       = GEGL_CHANT_PROPERTIES (operation);
+
+    op_area->left   =
+        op_area->right  = o->xsize;
+    op_area->top    =
+        op_area->bottom = o->ysize;
+
+    GeglNode * self;
+    GeglPad *pad;
+    Babl * format=babl_format ("RaGaBaA float");
+    self=gegl_operation_get_source_node(operation,"input");
+    while(self){
+        if(strcmp(gegl_node_get_operation(self),"gimp:tilemanager-source")==0){
+            format=gegl_operation_get_format(self->operation,"output");
+            break;
+        }
+        self=gegl_operation_get_source_node(self->operation,"input");
+    }
+    gegl_operation_set_format (operation, "output", format);
 }
 
 static void
@@ -148,6 +187,12 @@ process (GeglOperation       *operation,
   src_rect.width += op_area->left + op_area->right;
   src_rect.height += op_area->top + op_area->bottom;
 
+  if (gegl_cl_is_opencl_available())
+  {
+      pixelise_cl(input, &src_rect, output,roi, o->xsize, o->ysize);
+      return TRUE;
+  }
+
   buf = g_new0 (gfloat, src_rect.width * src_rect.height * 4);
 
   gegl_buffer_get (input, 1.0, &src_rect, babl_format ("RaGaBaA float"), buf, GEGL_AUTO_ROWSTRIDE);
@@ -161,6 +206,132 @@ process (GeglOperation       *operation,
   return  TRUE;
 }
 
+#include "opencl/gegl-cl.h"
+
+static const char* kernel_source =
+"kernel void calc_block_color(global float4 *in,                       \n"
+"                             global float4 *out,                      \n"
+"                             int xsize,                               \n"
+"                             int ysize)                               \n"
+"{                                                                     \n"
+"    int gidx = get_global_id(0);                                      \n"
+"    int gidy = get_global_id(1);                                      \n"
+"    int src_width  = get_global_size(0);                              \n"
+"    int src_height = get_global_size(1) + 2 * xsize;                  \n"
+"                                                                      \n"
+"    int cx = gidx / xsize;                                            \n"
+"    int cy = gidy / ysize;                                            \n"
+"                                                                      \n"
+"    float weight   = 1.0f / (xsize * ysize);                          \n"
+"    int line_width = src_width + 2 * xsize;                           \n"
+"                                                                      \n"
+"    int px = cx * xsize + xsize;                                      \n"
+"    int py = cy * ysize + ysize;                                      \n"
+"                                                                      \n"
+"    int i,j;                                                          \n"
+"    float4 col = 0.0f;                                                \n"
+"    for (j = py;j < py +ysize; ++j)                                   \n"
+"    {                                                                 \n"
+"        for (i = px;i < px + xsize; ++i)                              \n"
+"        {                                                             \n"
+"            col += in[j * line_width + i];                            \n"
+"        }                                                             \n"
+"    }                                                                 \n"
+"    int block_count_x = (src_width - 1) / xsize +1;                   \n"
+"    out[cy * block_count_x + cx] = col * weight;                      \n"
+"                                                                      \n"
+"}                                                                     \n"
+"                                                                      \n"
+"kernel void kernel_pixelise (global float4 *in,                       \n"
+"                             global float4 *out,                      \n"
+"                             int xsize,                               \n"
+"                             int ysize)                               \n"
+"{                                                                     \n"
+"    int gidx = get_global_id(0);                                      \n"
+"    int gidy = get_global_id(1);                                      \n"
+"                                                                      \n"
+"    int src_width  = get_global_size(0);                              \n"
+"    int src_height = get_global_size(1);                              \n"
+"                                                                      \n"
+"    int cx = gidx / xsize;                                            \n"
+"    int cy = gidy / ysize;                                            \n"
+"    int block_count_x = (src_width - 1) / xsize +1;                   \n"
+"                                                                      \n"
+"    out[gidx + gidy * src_width] = in[cy * block_count_x + cx];       \n"
+"}                                                                     \n";
+
+static gegl_cl_run_data *cl_data = NULL;
+
+static void
+pixelise_cl     (GeglBuffer  *src,
+                 const GeglRectangle  *src_rect,
+                 GeglBuffer  *dst,
+                 const GeglRectangle  *dst_rect,
+                 const int   xsize,
+                 const int   ysize)
+{
+    const Babl  * in_format = babl_format("RGBA float");
+    const Babl  *out_format = babl_format("RGBA float");
+    /* AreaFilter general processing flow.
+       Loading data and making the necessary color space conversion. */
+#include "gegl-cl-operation-area-filter-fw1.h"
+    ///////////////////////////////////////////////////////////////////////////
+    /* Algorithm specific processing flow.
+       Build kernels, setting parameters, and running them. */
+
+    if (!cl_data)
+    {
+        const char *kernel_name[] ={
+            "calc_block_color", "kernel_pixelise", NULL};
+            cl_data = gegl_cl_compile_and_build(kernel_source, kernel_name);
+    }
+    if (!cl_data) CL_ERROR;
+
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 0, sizeof(cl_mem), (void*)&src_mem));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 1, sizeof(cl_mem), (void*)&dst_mem));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 2, sizeof(cl_int), (void*)&xsize));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[0], 3, sizeof(cl_int), (void*)&ysize));
+
+    CL_SAFE_CALL(errcode = gegl_clEnqueueNDRangeKernel(
+        gegl_cl_get_command_queue(), cl_data->kernel[0],
+        2, NULL,
+        gbl_size, NULL,
+        0, NULL, NULL));
+
+    errcode = gegl_clEnqueueBarrier(gegl_cl_get_command_queue());
+    if (CL_SUCCESS != errcode) CL_ERROR;
+
+    cl_mem tmp_mem = dst_mem;
+    dst_mem = src_mem;
+    src_mem = tmp_mem;
+
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[1], 0, sizeof(cl_mem), (void*)&src_mem));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[1], 1, sizeof(cl_mem), (void*)&dst_mem));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[1], 2, sizeof(cl_int), (void*)&xsize));
+    CL_SAFE_CALL(errcode = gegl_clSetKernelArg(
+        cl_data->kernel[1], 3, sizeof(cl_int), (void*)&ysize));
+
+    CL_SAFE_CALL(errcode = gegl_clEnqueueNDRangeKernel(
+        gegl_cl_get_command_queue(), cl_data->kernel[1],
+        2, NULL,
+        gbl_size, NULL,
+        0, NULL, NULL));
+
+    errcode = gegl_clEnqueueBarrier(gegl_cl_get_command_queue());
+    if (CL_SUCCESS != errcode) CL_ERROR;
+
+    ///////////////////////////////////////////////////////////////////////////
+    /* AreaFilter general processing flow.
+       Making the necessary color space conversion and Saving data. */
+#include "gegl-cl-operation-area-filter-fw2.h"
+}
 
 static void
 gegl_chant_class_init (GeglChantClass *klass)
@@ -172,10 +343,14 @@ gegl_chant_class_init (GeglChantClass *klass)
   filter_class    = GEGL_OPERATION_FILTER_CLASS (klass);
 
   filter_class->process    = process;
-  operation_class->prepare = prepare;
+  if (gegl_cl_is_opencl_available())  
+      operation_class->prepare = prepare_cl;
+  else
+      operation_class->prepare = prepare;
 
   operation_class->categories  = "blur";
   operation_class->name        = "gegl:pixelise";
+  operation_class->opencl_support = TRUE;
   operation_class->description =
        _("Pixelise filter");
 }
