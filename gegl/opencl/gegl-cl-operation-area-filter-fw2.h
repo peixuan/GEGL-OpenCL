@@ -7,8 +7,8 @@
     {
         dst_buf = gegl_clEnqueueMapBuffer(gegl_cl_get_command_queue(),
             dst_mem, CL_TRUE, CL_MAP_READ,
-            NULL, size_out,
-            NULL, NULL, NULL,
+            0, size_out,
+            0, NULL, NULL,
             &errcode);
         if (CL_SUCCESS != errcode) CL_ERROR;
 
@@ -16,7 +16,7 @@
             GEGL_AUTO_ROWSTRIDE);
         errcode = gegl_clEnqueueUnmapMemObject(gegl_cl_get_command_queue(),
             dst_mem, dst_buf, 
-            NULL, NULL, NULL);
+            0, NULL, NULL);
         if (CL_SUCCESS != errcode) CL_ERROR;
     }
     else if (CL_COLOR_CONVERT == need_babl_out)
@@ -29,8 +29,8 @@
 
         dst_buf = gegl_clEnqueueMapBuffer(gegl_cl_get_command_queue(),
             dst_mem, CL_TRUE, CL_MAP_READ,
-            NULL, size_dst,
-            NULL, NULL, NULL,
+            0, size_dst,
+            0, NULL, NULL,
             &errcode);
         if (CL_SUCCESS != errcode) CL_ERROR;
 
@@ -38,7 +38,7 @@
             GEGL_AUTO_ROWSTRIDE);
         errcode = gegl_clEnqueueUnmapMemObject(gegl_cl_get_command_queue(),
             dst_mem, dst_buf, 
-            NULL, NULL, NULL);
+            0, NULL, NULL);
         if (CL_SUCCESS != errcode) CL_ERROR;
     }
 
