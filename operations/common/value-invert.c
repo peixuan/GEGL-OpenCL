@@ -58,22 +58,21 @@ static void prepare (GeglOperation *operation)
 	gegl_operation_set_format (operation, "input", babl_format ("RGBA float"));
 	GeglOperationClass            *operation_class;
 	operation_class=GEGL_OPERATION_GET_CLASS(operation);
-	Babl * format=babl_format ("RGBA float");
-	if(operation_class->opencl_support){
-		//Set the source pixel data format as the output format of current operation
-		GeglNode * self;
-		GeglPad *pad;
 
-		//get the source pixel data format
-		self=gegl_operation_get_source_node(operation,"input");
-		while(self){
-			if(strcmp(gegl_node_get_operation(self),"gimp:tilemanager-source")==0){
-				format=gegl_operation_get_format(self->operation,"output");
-				break;
-			}
-			self=gegl_operation_get_source_node(self->operation,"input");
+	Babl * format=babl_format ("RGBA float");	
+	//Set the source pixel data format as the output format of current operation
+	GeglNode * self;
+	GeglPad *pad;
+	//get the source pixel data format
+	self=gegl_operation_get_source_node(operation,"input");
+	while(self){
+		if(strcmp(gegl_node_get_operation(self),"gimp:tilemanager-source")==0){
+			format=gegl_operation_get_format(self->operation,"output");
+			break;
 		}
+		self=gegl_operation_get_source_node(self->operation,"input");
 	}
+	
 	gegl_operation_set_format (operation, "output", format);
 }
 
@@ -162,16 +161,27 @@ static const char* kernel_source =
 "  float cmax,cmin;												\n"
 "  cmax=max(in_v.x,max(in_v.y,in_v.z));	                        \n"							
 "  cmin=min(in_v.x,min(in_v.y,in_v.z));                         \n"
-"  if(cmax==0||(cmax-cmin)==0)                                  \n"
-"	  out_v.xyz=in_v.xyz-cmax;                                  \n"                                  
+"  if((cmax==0.0f)||((cmax-cmin)==0.0f))                        \n"
+"	  out_v.xyz=1.0f-cmax;                                      \n"                                  
 "  else{														\n"
-"	  out_v.xyz=in_v.xyz;                                       \n"
 "	  if(cmax==in_v.x)                                          \n"
-"		  out_v.x=1.0-cmax;                                     \n"
+"     {                                                         \n"
+"         out_v.x=1.0f-cmax;                                    \n"
+"		  out_v.y=out_v.x * in_v.y / cmax;                      \n"
+"		  out_v.z=out_v.x * in_v.z / cmax;                      \n"
+"      }                                                        \n"
 "	  else if(cmax==in_v.y)                                     \n"
-"		  out_v.y=1.0-cmax;                                     \n"
+"     {                                                         \n"
+"         out_v.y=1.0f-cmax;                                    \n"
+"		  out_v.x=out_v.y * in_v.x / cmax;                      \n"
+"		  out_v.z=out_v.y * in_v.z / cmax;                      \n"
+"      }                                                        \n"
 "	  else														\n"
-"		  out_v.z=1.0-cmax;                                     \n"
+"     {                                                         \n"
+"         out_v.z=1.0f-cmax;                                    \n"
+"		  out_v.y=out_v.z * in_v.y / cmax;                      \n"
+"		  out_v.x=out_v.z * in_v.x / cmax;                      \n"
+"      }                                                        \n"
 "  }															\n"
 "  out_v.w=in_v.w;                                              \n"
 "  out[gid]=out_v;                                              \n"
