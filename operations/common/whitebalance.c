@@ -44,27 +44,25 @@ gegl_chant_double (saturation,   _("Saturation"),   -3.0, 3.0, 1.0, _(""))
 static void prepare (GeglOperation *operation)
 {
 
-	gegl_operation_set_format (operation, "input", babl_format ("RGBA float"));
+	gegl_operation_set_format (operation, "input", babl_format ("Y'CbCrA float"));
 
 	GeglOperationClass            *operation_class;
 	operation_class=GEGL_OPERATION_GET_CLASS(operation);
-	Babl * format=babl_format ("RGBA float");
-	if(operation_class->opencl_support){
-		//Set the source pixel data format as the output format of current operation
-		GeglNode * self;
-		GeglPad *pad;
-		//default format:RGBA float
 
-		//get the source pixel data format
-		self=gegl_operation_get_source_node(operation,"input");
-		while(self){
-			if(strcmp(gegl_node_get_operation(self),"gimp:tilemanager-source")==0){
-				format=gegl_operation_get_format(self->operation,"output");
-				break;
-			}
-			self=gegl_operation_get_source_node(self->operation,"input");
+	Babl * format=babl_format ("Y'CbCrA float");	
+	//Set the source pixel data format as the output format of current operation
+	GeglNode * self;
+	GeglPad *pad;
+	//get the source pixel data format
+	self=gegl_operation_get_source_node(operation,"input");
+	while(self){
+		if(strcmp(gegl_node_get_operation(self),"gimp:tilemanager-source")==0){
+			format=gegl_operation_get_format(self->operation,"output");
+			break;
 		}
+		self=gegl_operation_get_source_node(self->operation,"input");
 	}
+	
 	gegl_operation_set_format (operation, "output", format);
 }
 
@@ -131,7 +129,7 @@ static const char* kernel_source =
 "  float4 out_v;                                                \n"
 "  out_v = in_v;                                                \n"
 "  out_v.y   =  (out_v.y+in_v.x*a_scale+a_base)*saturation;     \n"
-"  out_v.z   =  (out_v.z+in_v.x*a_scale+a_base)*saturation;     \n"
+"  out_v.z   =  (out_v.z+in_v.x*b_scale+b_base)*saturation;     \n"
 "  out[gid]=out_v;                                              \n"
 "}                                                              \n";
 
