@@ -82,26 +82,21 @@ static void prepare (GeglOperation *operation)
 {
 
 	gegl_operation_set_format (operation, "input", babl_format ("RGBA float"));
+    Babl * format=babl_format ("RGBA float");	
+	//Set the source pixel data format as the output format of current operation
+	GeglNode * self;
+	GeglPad *pad;
 
-    GeglOperationClass            *operation_class;
-	operation_class=GEGL_OPERATION_GET_CLASS(operation);
-    Babl * format=babl_format ("RGBA float");
-	if(operation_class->opencl_support){
-		//Set the source pixel data format as the output format of current operation
-		GeglNode * self;
-		GeglPad *pad;
-		//default format:RGBA float
-		
-		//get the source pixel data format
-		self=gegl_operation_get_source_node(operation,"input");
-		while(self){
-			if(strcmp(gegl_node_get_operation(self),"gimp:tilemanager-source")==0){
-				format=gegl_operation_get_format(self->operation,"output");
-				break;
-			}
-			self=gegl_operation_get_source_node(self->operation,"input");
+	//get the source pixel data format
+	self=gegl_operation_get_source_node(operation,"input");
+	while(self){
+		if(strcmp(gegl_node_get_operation(self),"gimp:tilemanager-source")==0){
+			format=gegl_operation_get_format(self->operation,"output");
+			break;
 		}
+		self=gegl_operation_get_source_node(self->operation,"input");
 	}
+	
 	gegl_operation_set_format (operation, "output", format);
 }
 static gboolean
@@ -229,8 +224,7 @@ gegl_chant_class_init (GeglChantClass *klass)
   operation_class->prepare = prepare;
 
   point_filter_class->cl_process           = cl_process;
-//  point_filter_class->cl_kernel_source     = kernel_source;
-  
+
   /* specify the name this operation is found under in the GUI/when
    * programming/in XML
    */

@@ -46,9 +46,6 @@ static void prepare (GeglOperation *operation)
 
 	gegl_operation_set_format (operation, "input", babl_format ("Y'CbCrA float"));
 
-	GeglOperationClass            *operation_class;
-	operation_class=GEGL_OPERATION_GET_CLASS(operation);
-
 	Babl * format=babl_format ("Y'CbCrA float");	
 	//Set the source pixel data format as the output format of current operation
 	GeglNode * self;

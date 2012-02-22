@@ -2,7 +2,7 @@
 #include "gegl-cl-color.h"
 #include "gegl-cl-init.h"
 #include "gegl-cl-color-kernel.h"
-#define CL_FORMAT_N 10
+#define CL_FORMAT_N 11
 
 static gegl_cl_run_data * kernels_color = NULL;
 
@@ -19,20 +19,31 @@ gegl_cl_color_compile_kernels(void)
 		"rgba_gamma_2_2_premultiplied2rgba",  /* 5 */
 		"rgbaf_to_rgbau8",                    /* 6 */
 		"rgbau8_to_rgbaf",                    /* 7 */
-		"rgbaf_to_rgbu8",                    /* 8 */
-		"rgbu8_to_rgbaf",                    /* 9 */
+		"rgbaf_to_rgbu8",                     /* 8 */
+		"rgbu8_to_rgbaf",                     /* 9 */
+		"rgba2ycbcra"   ,                     /*10 */
+		"ycbcra2rgba"   ,                     /*11 */
+		"rgba2graya"    ,                     /*12 */
+		"graya2rgba"    ,                     /*13 */
+		"rgba2gray"     ,                     /*14 */
+		"gray2rgba"     ,                     /*15 */
+		"rgba_to_gray_alpha_premultiplied",   /*16 */
+		"gray_alpha_premultiplied_to_rgba",   /*17 */
+		"rgba2gray_gamma_2_2_premultiplied",  /*18 */
+		"gray_gamma_2_2_premultiplied2rgba",  /*19 */
 		NULL};
 
-	    format[0] = babl_format ("RaGaBaA float"),
-		format[1] = babl_format ("RGBA float"),
+	    format[0] = babl_format ("RGBA float"),
+	    format[1] = babl_format ("RaGaBaA float"),		
 		format[2] = babl_format ("R'G'B'A float"),
-		format[3] = babl_format ("RGBA float"),
-		format[4] = babl_format ("R'aG'aB'aA float"),
-		format[5] = babl_format ("RGBA float"),
-		format[6] = babl_format ("RGBA u8"),
-		format[7] = babl_format ("RGBA float"),
-		format[8] = babl_format ("RGB u8"),
-		format[9] = babl_format ("RGBA float"),
+		format[3] = babl_format ("R'aG'aB'aA float"),
+		format[4] = babl_format ("RGBA u8"),
+		format[5] = babl_format ("RGB u8"),
+		format[6] = babl_format ("Y'CbCrA float"),
+		format[7] = babl_format ("YA float"),		
+		format[8] = babl_format ("Y float"),
+		format[9] = babl_format ("YaA float"),
+		format[10]= babl_format ("Y'aA float"),
 
 		kernels_color = gegl_cl_compile_and_build (kernel_color_source, kernel_name);
 }
@@ -90,6 +101,12 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
 		else if (out_format == babl_format ("R'aG'aB'aA float")) CONV_1(4)
 		else if (out_format == babl_format ("RGBA u8"))          CONV_1(6)
 		else if (out_format == babl_format ("RGB u8"))           CONV_1(8)
+		else if (out_format == babl_format ("Y'CbCrA float"))    CONV_1(10)
+		else if (out_format == babl_format ("YA float"))         CONV_1(12)
+		else if (out_format == babl_format ("Y float"))          CONV_1(14)
+		else if (out_format == babl_format ("YaA float"))        CONV_1(16)
+		else if (out_format == babl_format ("Y'aA float"))		 CONV_1(18)
+
 	}
 	else if (in_format == babl_format ("RaGaBaA float"))
 	{
@@ -98,6 +115,11 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
 		else if (out_format == babl_format ("R'aG'aB'aA float")) CONV_2(1, 4)
 		else if (out_format == babl_format ("RGBA u8"))          CONV_2(1, 6)
 		else if (out_format == babl_format ("RGB u8"))           CONV_2(1, 8)
+		else if (out_format == babl_format ("Y'CbCrA float"))    CONV_2(1,10)
+		else if (out_format == babl_format ("YA float"))         CONV_2(1,12)
+		else if (out_format == babl_format ("Y float"))          CONV_2(1,14)
+		else if (out_format == babl_format ("YaA float"))        CONV_2(1,16)
+		else if (out_format == babl_format ("Y'aA float"))		 CONV_2(1,18)
 	}
 	else if (in_format == babl_format ("R'G'B'A float"))
 	{
@@ -106,6 +128,11 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
 		else if (out_format == babl_format ("R'aG'aB'aA float")) CONV_2(3, 4)
 		else if (out_format == babl_format ("RGBA u8"))          CONV_2(3, 6)
 		else if (out_format == babl_format ("RGB u8"))           CONV_2(3, 8)
+		else if (out_format == babl_format ("Y'CbCrA float"))    CONV_2(3,10)
+		else if (out_format == babl_format ("YA float"))         CONV_2(3,12)
+		else if (out_format == babl_format ("Y float"))          CONV_2(3,14)
+		else if (out_format == babl_format ("YaA float"))        CONV_2(3,16)
+		else if (out_format == babl_format ("Y'aA float"))       CONV_2(3,18)
 	}
 	else if (in_format == babl_format ("R'aG'aB'aA float"))
 	{
@@ -114,6 +141,11 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
 		else if (out_format == babl_format ("R'G'B'A float"))    CONV_2(5, 2)
 		else if (out_format == babl_format ("RGBA u8"))          CONV_2(5, 6)
 		else if (out_format == babl_format ("RGB u8"))           CONV_2(5, 8)
+		else if (out_format == babl_format ("Y'CbCrA float"))    CONV_2(5,10)
+		else if (out_format == babl_format ("YA float"))         CONV_2(5,12)
+		else if (out_format == babl_format ("Y float"))          CONV_2(5,14)
+		else if (out_format == babl_format ("YaA float"))        CONV_2(5,16)
+		else if (out_format == babl_format ("Y'aA float"))       CONV_2(5,18)
 	}
 	else if (in_format == babl_format ("RGBA u8"))
 	{
@@ -122,6 +154,11 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
 		else if (out_format == babl_format ("R'G'B'A float"))    CONV_2(7, 2)
 		else if (out_format == babl_format ("R'aG'aB'aA float")) CONV_2(7, 4)
 		else if (out_format == babl_format ("RGB u8"))           CONV_2(7, 8)
+		else if (out_format == babl_format ("Y'CbCrA float"))    CONV_2(7,10)
+		else if (out_format == babl_format ("YA float"))         CONV_2(7,12)
+		else if (out_format == babl_format ("Y float"))          CONV_2(7,14)
+		else if (out_format == babl_format ("YaA float"))        CONV_2(7,16)
+		else if (out_format == babl_format ("Y'aA float"))       CONV_2(7,18)
 	}
 	else if (in_format == babl_format ("RGB u8"))
 	{
@@ -130,6 +167,76 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
 		else if (out_format == babl_format ("R'G'B'A float"))    CONV_2(9, 2)
 		else if (out_format == babl_format ("R'aG'aB'aA float")) CONV_2(9, 4)
 		else if (out_format == babl_format ("RGBA u8"))          CONV_2(9, 6)
+		else if (out_format == babl_format ("Y'CbCrA float"))    CONV_2(9,10)
+		else if (out_format == babl_format ("YA float"))         CONV_2(9,12)
+		else if (out_format == babl_format ("Y float"))          CONV_2(9,14)
+		else if (out_format == babl_format ("YaA float"))        CONV_2(9,16)
+		else if (out_format == babl_format ("Y'aA float"))       CONV_2(9,18)
+	}
+	else if (in_format == babl_format ("Y'CbCrA float"))
+	{
+		if      (out_format == babl_format ("RGBA float"))       CONV_1(11)
+	    else if (out_format == babl_format ("RaGaBaA float"))    CONV_2(11, 0)
+		else if (out_format == babl_format ("R'G'B'A float"))    CONV_2(11, 2)
+		else if (out_format == babl_format ("R'aG'aB'aA float")) CONV_2(11, 4)
+		else if (out_format == babl_format ("RGBA u8"))          CONV_2(11, 6)
+		else if (out_format == babl_format ("RGB u8"))           CONV_2(11, 8)
+		else if (out_format == babl_format ("YA float"))         CONV_2(11,12)
+		else if (out_format == babl_format ("Y float"))          CONV_2(11,14)
+		else if (out_format == babl_format ("YaA float"))        CONV_2(11,16)
+		else if (out_format == babl_format ("Y'aA float"))		 CONV_2(11,18)
+	}
+	else if (in_format == babl_format ("YA float"))
+	{
+		if      (out_format == babl_format ("RGBA float"))       CONV_1(13)
+		else if (out_format == babl_format ("RaGaBaA float"))    CONV_2(13, 0)
+		else if (out_format == babl_format ("R'G'B'A float"))    CONV_2(13, 2)
+		else if (out_format == babl_format ("R'aG'aB'aA float")) CONV_2(13, 4)
+		else if (out_format == babl_format ("RGBA u8"))          CONV_2(13, 6)
+		else if (out_format == babl_format ("RGB u8"))           CONV_2(13, 8)
+		else if (out_format == babl_format ("Y'CbCrA float"))    CONV_2(13,10)
+		else if (out_format == babl_format ("Y float"))          CONV_2(13,14)
+		else if (out_format == babl_format ("YaA float"))        CONV_2(13,16)
+		else if (out_format == babl_format ("Y'aA float"))		 CONV_2(13,18)
+	}
+	else if (in_format == babl_format ("Y float"))
+	{
+		if      (out_format == babl_format ("RGBA float"))       CONV_1(15)
+		else if (out_format == babl_format ("RaGaBaA float"))    CONV_2(15, 0)
+		else if (out_format == babl_format ("R'G'B'A float"))    CONV_2(15, 2)
+		else if (out_format == babl_format ("R'aG'aB'aA float")) CONV_2(15, 4)
+		else if (out_format == babl_format ("RGBA u8"))          CONV_2(15, 6)
+		else if (out_format == babl_format ("RGB u8"))           CONV_2(15, 8)
+		else if (out_format == babl_format ("Y'CbCrA float"))    CONV_2(15,10)
+		else if (out_format == babl_format ("YA float"))         CONV_2(15,12)
+		else if (out_format == babl_format ("YaA float"))        CONV_2(15,16)
+		else if (out_format == babl_format ("Y'aA float"))		 CONV_2(15,18)
+	}
+	else if (in_format == babl_format ("YaA float"))
+	{
+		if      (out_format == babl_format ("RGBA float"))       CONV_1(17)
+		else if (out_format == babl_format ("RaGaBaA float"))    CONV_2(17, 0)
+		else if (out_format == babl_format ("R'G'B'A float"))    CONV_2(17, 2)
+		else if (out_format == babl_format ("R'aG'aB'aA float")) CONV_2(17, 4)
+		else if (out_format == babl_format ("RGBA u8"))          CONV_2(17, 6)
+		else if (out_format == babl_format ("RGB u8"))           CONV_2(17, 8)
+		else if (out_format == babl_format ("Y'CbCrA float"))    CONV_2(17,10)
+		else if (out_format == babl_format ("YA float"))         CONV_2(17,12)
+		else if (out_format == babl_format ("Y float"))          CONV_2(17,14)
+		else if (out_format == babl_format ("Y'aA float"))		 CONV_2(17,18)
+	}
+	else if (in_format == babl_format ("Y'aA float"))
+	{
+		if      (out_format == babl_format ("RGBA float"))       CONV_1(19)
+		else if (out_format == babl_format ("RaGaBaA float"))    CONV_2(19, 0)
+		else if (out_format == babl_format ("R'G'B'A float"))    CONV_2(19, 2)
+		else if (out_format == babl_format ("R'aG'aB'aA float")) CONV_2(19, 4)
+		else if (out_format == babl_format ("RGBA u8"))          CONV_2(19, 6)
+		else if (out_format == babl_format ("RGB u8"))           CONV_2(19, 8)
+		else if (out_format == babl_format ("Y'CbCrA float"))    CONV_2(19,10)
+		else if (out_format == babl_format ("YA float"))         CONV_2(19,12)
+		else if (out_format == babl_format ("Y float"))          CONV_2(19,14)
+		else if (out_format == babl_format ("YaA float"))        CONV_2(19,16)
 	}
 
 
@@ -147,8 +254,6 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
         
 		errcode = gegl_clSetKernelArg(kernels_color->kernel[conv[i]], 1, sizeof(cl_mem), (void*)&color_out_tex);
 		if (errcode != CL_SUCCESS) CL_ERROR;
-
-
 
 		const size_t global_size[1]={pixel_count};
 		
@@ -171,6 +276,9 @@ gegl_cl_color_conv (cl_mem *in_tex, cl_mem *out_tex, int out_in,const size_t pix
 		*in_tex=color_in_tex;
 		*out_tex=color_out_tex;
 	}
-	
+   else if(out_in==0){	  
+	   *out_tex=color_in_tex;
+       *in_tex=color_out_tex;		 	  
+   }	
 	return TRUE;
 	}
