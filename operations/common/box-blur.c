@@ -283,6 +283,7 @@ process (GeglOperation       *operation,
   if (gegl_cl_is_opencl_available())
   {
       box_blur_cl(input, &rect, output, result, o->radius);
+      return;
   }
 
   temp  = gegl_buffer_new (&rect,
