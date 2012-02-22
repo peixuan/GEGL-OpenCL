@@ -39,56 +39,6 @@ gegl_chant_curve (curve, _("Curve"), _("The contrast curve."))
 
 #include "gegl-chant.h"
 
-char* readSource(const char *sourceFilename) {
-
-	FILE *fp;
-	int err;
-	int size;
-
-	char *source;
-
-	fp = fopen(sourceFilename, "rb");
-	if(fp == NULL) {
-		printf("Could not open kernel file: %s\n", sourceFilename);
-		exit(-1);
-	}
-
-	err = fseek(fp, 0, SEEK_END);
-	if(err != 0) {
-		printf("Error seeking to end of file\n");
-		exit(-1);
-	}
-
-	size = ftell(fp);
-	if(size < 0) {
-		printf("Error getting file position\n");
-		exit(-1);
-	}
-
-	err = fseek(fp, 0, SEEK_SET);
-	if(err != 0) {
-		printf("Error seeking to start of file\n");
-		exit(-1);
-	}
-
-	source = (char*)malloc(size+1);
-	if(source == NULL) {
-		printf("Error allocating %d bytes for the program source\n", size+1);
-		exit(-1);
-	}
-
-	err = fread(source, 1, size, fp);
-	if(err != size) {
-		printf("only read %d bytes\n", err);
-		exit(0);
-	}
-
-	source[size] = '\0';
-
-	return source;
-}
-
-
 static void prepare (GeglOperation *operation)
 {
   Babl *format = babl_format ("YA float");
@@ -174,6 +124,24 @@ process (GeglOperation       *op,
 }
 
 #include "opencl/gegl-cl.h"
+
+static const char* kernel_source =
+"__kernel void contrast_curve(__global const float2 * in,           \n"
+"							 __global const float * ys,				\n"	
+"							 __global float2 * out,					\n"
+"							 int num_sampling_points)				\n"
+"{																	\n"
+"	int gid=get_global_id(0);										\n"
+"	float2 in_v=in[gid];											\n"
+"	int x = (int)(in_v.x * num_sampling_points);					\n"
+"	float y;														\n"
+"	if(x < 0)  x=0;													\n"
+"	else if(x >= num_sampling_points)  x=num_sampling_points-1;		\n"
+"	y = ys[x];														\n"
+"	in_v.x = y;														\n"
+"	out[gid] =  in_v;												\n"
+"}																	\n";
+
 static gegl_cl_run_data *cl_data = NULL;
 
 /* OpenCL processing function */
@@ -219,9 +187,7 @@ cl_process (GeglOperation       *op,
 
 		if (!cl_data)
 		{
-			const char *sourceFile = "ContrastCurve.cl";
-			const char *kernel_name[] = {"contrast_curve", NULL};
-			char* kernel_source = readSource(sourceFile);
+			const char *kernel_name[] = {"contrast_curve", NULL};		
 			cl_data = gegl_cl_compile_and_build(kernel_source, kernel_name);
 		}
 		if (!cl_data) return 1;
